@@ -1,0 +1,10 @@
+# Li sources in this repository are licensed under the GNU General Public
+# License, version 3 or (at your option) any later version — the same license
+# as the li ecosystem (`li-langverse`) packages.
+#
+# Full text: https://www.gnu.org/licenses/gpl-3.0.txt
+#
+# The vendored runtime crypto implementation and Monocypher are separately
+# licensed:
+#   runtime/vendor/monocypher/monocypher.c,h
+#       BSD-2-Clause OR CC0-1.0  (c) 2017-2020 Loup Vaillant

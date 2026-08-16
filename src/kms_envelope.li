@@ -1,0 +1,88 @@
+# Li KMS envelope core - KEK/DEK envelope encryption + Ed25519, pure Li on the
+# Monocypher-backed runtime externs. Demonstrates the KMS key-management layer:
+#   KEK (root) wraps per-project DEKs; DEKs seal project data (XChaCha20-Poly1305);
+#   per-project Ed25519 keypairs sign/verify. Selftest returns 0 on success.
+
+import std.runtime.seam
+
+# Seal `n` bytes at `pt` with 32-byte `key`: fills `nonce` (24B random),
+# `mac` (16B), `ct` (nB). Returns 0.
+def seal(key: ptr, pt: ptr, n: int, nonce: ptr, mac: ptr, ct: ptr) raises IO -> int
+  requires 0 <= n
+  ensures result == 0
+  decreases 0
+=
+  var r: int = li_rt_rng_fill_bytes(nonce, 24)
+  li_rt_crypto_lock(mac, ct, pt, n, key, nonce)
+  return 0
+
+# Open: decrypt `ct` into `out`; returns 0 on success, -1 on auth failure.
+def open_ct(key: ptr, mac: ptr, nonce: ptr, ct: ptr, n: int, out: ptr) raises IO -> int
+  requires 0 <= n
+  ensures result == 0 or result == -1
+  decreases 0
+=
+  return li_rt_crypto_unlock(out, mac, ct, n, key, nonce)
+
+# Byte equality of two n-byte buffers: 1 if equal, 0 otherwise.
+def buf_eq(a: ptr, b: ptr, n: int) raises IO -> int
+  requires 0 <= n
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  var i: int = 0
+  while i < n:
+    if net_byte_at_i(a, i) != net_byte_at_i(b, i):
+      return 0
+    i = i + 1
+  return 1
+
+def main() raises IO, Alloc -> int
+  requires true
+  ensures result == 0 or result == 1 or result == 2 or result == 3 or result == 4 or result == 5 or result == 6
+  decreases 0
+=
+  var kek: ptr = net_buf_alloc(32)
+  var r0: int = li_rt_rng_fill_bytes(kek, 32)
+  var dek: ptr = net_buf_alloc(32)
+  var r1: int = li_rt_rng_fill_bytes(dek, 32)
+  var dnonce: ptr = net_buf_alloc(24)
+  var dmac: ptr = net_buf_alloc(16)
+  var dct: ptr = net_buf_alloc(32)
+  var s0: int = seal(kek, dek, 32, dnonce, dmac, dct)
+  var dek2: ptr = net_buf_alloc(32)
+  var u0: int = open_ct(kek, dmac, dnonce, dct, 32, dek2)
+  if u0 != 0:
+    return 1
+  if buf_eq(dek, dek2, 32) != 1:
+    return 2
+  var kek2: ptr = net_buf_alloc(32)
+  var r2: int = li_rt_rng_fill_bytes(kek2, 32)
+  var dek3: ptr = net_buf_alloc(32)
+  var u1: int = open_ct(kek2, dmac, dnonce, dct, 32, dek3)
+  if u1 == 0:
+    return 3
+  var msg: ptr = net_buf_alloc(8)
+  li_rt_vec_i32_set(msg, 0, 12345)
+  li_rt_vec_i32_set(msg, 1, 67890)
+  var mnonce: ptr = net_buf_alloc(24)
+  var mmac: ptr = net_buf_alloc(16)
+  var mct: ptr = net_buf_alloc(8)
+  var s1: int = seal(dek, msg, 8, mnonce, mmac, mct)
+  var msg2: ptr = net_buf_alloc(8)
+  var u2: int = open_ct(dek, mmac, mnonce, mct, 8, msg2)
+  if u2 != 0:
+    return 4
+  if buf_eq(msg, msg2, 8) != 1:
+    return 5
+  var seed: ptr = net_buf_alloc(32)
+  var r3: int = li_rt_rng_fill_bytes(seed, 32)
+  var sk: ptr = net_buf_alloc(64)
+  var pk: ptr = net_buf_alloc(32)
+  li_rt_crypto_ed25519_keypair(pk, sk, seed)
+  var sig: ptr = net_buf_alloc(64)
+  li_rt_crypto_ed25519_sign(sig, msg, 8, sk)
+  var ok: int = li_rt_crypto_ed25519_verify(sig, msg, 8, pk)
+  if ok != 0:
+    return 6
+  return 0

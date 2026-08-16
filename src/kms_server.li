@@ -1,0 +1,204 @@
+# Li KMS HTTP server - full API in pure Li on runtime externs.
+#   GET  /health  -> 200 "ok"
+#   POST /encrypt (body = base64(plaintext))        -> 200 "base64(mac):base64(ct)"
+#   POST /decrypt (body = "base64(mac):base64(ct)") -> 200 base64(plaintext)
+#   POST /sign    (body = base64(message))          -> 200 base64(signature)
+#   POST /verify  (body = "base64(sig):base64(msg)")-> 200 "1" | "0"
+# A DEK + Ed25519 key are generated in-memory at startup. A fixed zero nonce is
+# used so the nonce need not be transmitted (binary-safe composition avoided).
+
+import std.runtime.seam
+
+def is_post(req: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  if net_byte_at_i(req, 0) != 80:
+    return 0
+  if net_byte_at_i(req, 1) != 79:
+    return 0
+  if net_byte_at_i(req, 2) != 83:
+    return 0
+  if net_byte_at_i(req, 3) != 84:
+    return 0
+  return 1
+
+def path4(req: ptr, off: int, p0: int, p1: int, p2: int, p3: int) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  if net_byte_at_i(req, off) != p0:
+    return 0
+  if net_byte_at_i(req, off + 1) != p1:
+    return 0
+  if net_byte_at_i(req, off + 2) != p2:
+    return 0
+  if net_byte_at_i(req, off + 3) != p3:
+    return 0
+  return 1
+
+def is_health(req: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  if net_byte_at_i(req, 4) != 47:
+    return 0
+  return path4(req, 5, 104, 101, 97, 108)
+
+def is_encrypt(req: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  if net_byte_at_i(req, 5) != 47:
+    return 0
+  return path4(req, 6, 101, 110, 99, 114)
+
+def is_decrypt(req: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  if net_byte_at_i(req, 5) != 47:
+    return 0
+  return path4(req, 6, 100, 101, 99, 114)
+
+def is_sign(req: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  if net_byte_at_i(req, 5) != 47:
+    return 0
+  return path4(req, 6, 115, 105, 103, 110)
+
+def is_verify(req: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  if net_byte_at_i(req, 5) != 47:
+    return 0
+  return path4(req, 6, 118, 101, 114, 105)
+
+def find_hdr_end(req: ptr) raises IO -> int
+  requires true
+  ensures result >= 0
+  decreases 0
+=
+  var i: int = 0
+  while i < 4092:
+    if net_byte_at_i(req, i) == 13:
+      if net_byte_at_i(req, i + 1) == 10:
+        if net_byte_at_i(req, i + 2) == 13:
+          if net_byte_at_i(req, i + 3) == 10:
+            return i + 4
+    i = i + 1
+  return 0
+
+def find_colon(s: ptr) raises IO -> int
+  requires true
+  ensures result >= -1
+  decreases 0
+=
+  var i: int = 0
+  while i < 128:
+    if net_byte_at_i(s, i) == 58:
+      return i
+    if net_byte_at_i(s, i) == 0:
+      return -1
+    i = i + 1
+  return -1
+
+def main() raises Net, Alloc, IO -> int
+  requires true
+  ensures result == 0
+  decreases 0
+=
+  var listen_fd: int = tcp_listen(54400)
+  var dek: ptr = net_buf_alloc(32)
+  var r1: int = li_rt_rng_fill_bytes(dek, 32)
+  var nonce: ptr = net_buf_alloc(24)
+  var z0: int = li_rt_memset_zero(nonce, 24)
+  var seed: ptr = net_buf_alloc(32)
+  var r2: int = li_rt_rng_fill_bytes(seed, 32)
+  var sk: ptr = net_buf_alloc(64)
+  var pk: ptr = net_buf_alloc(32)
+  li_rt_crypto_ed25519_keypair(pk, sk, seed)
+  var okbody: ptr = net_buf_alloc(8)
+  li_rt_vec_i32_set(okbody, 0, 682863)
+  var onebody: ptr = net_buf_alloc(8)
+  li_rt_vec_i32_set(onebody, 0, 49)
+  var zerobody: ptr = net_buf_alloc(8)
+  li_rt_vec_i32_set(zerobody, 0, 48)
+  var n: int = 0
+  while n < 8:
+    var conn: int = tcp_accept(listen_fd)
+    var req: ptr = tcp_recv_i(conn, 4096)
+    var isp: int = is_post(req)
+    if isp == 0:
+      if is_health(req) == 1:
+        tcp_http_write_response(conn, 200, okbody)
+    if isp == 1:
+      var hdrend: int = find_hdr_end(req)
+      var body: ptr = bytes_slice_i(req, hdrend, 4096)
+      var blen: int = container_str_len_i(body)
+      var raw: ptr = net_buf_alloc(128)
+      var rl: int = li_rt_b64_decode(body, blen, raw)
+      if is_encrypt(req) == 1:
+        var mac: ptr = net_buf_alloc(16)
+        var ct: ptr = net_buf_alloc(128)
+        li_rt_crypto_lock(mac, ct, raw, rl, dek, nonce)
+        var bmac: ptr = net_buf_alloc(32)
+        var bct: ptr = net_buf_alloc(256)
+        var lm: int = li_rt_b64_encode(mac, 16, bmac)
+        var lc: int = li_rt_b64_encode(ct, rl, bct)
+        var colon: ptr = net_buf_alloc(4)
+        var zc: int = li_rt_memset_zero(colon, 4)
+        li_rt_vec_i32_set(colon, 0, 58)
+        var resp: ptr = bytes_append_i(bmac, colon)
+        var resp2: ptr = bytes_append_i(resp, bct)
+        tcp_http_write_response(conn, 200, resp2)
+      if is_decrypt(req) == 1:
+        var col: int = find_colon(body)
+        var macs: ptr = bytes_slice_i(body, 0, col)
+        var cts: ptr = bytes_slice_i(body, col + 1, blen - col - 1)
+        var macd: ptr = net_buf_alloc(16)
+        var ctd: ptr = net_buf_alloc(128)
+        var lmacs: int = container_str_len_i(macs)
+        var lcts: int = container_str_len_i(cts)
+        var lm2: int = li_rt_b64_decode(macs, lmacs, macd)
+        var lc2: int = li_rt_b64_decode(cts, lcts, ctd)
+        var pt: ptr = net_buf_alloc(128)
+        var un: int = li_rt_crypto_unlock(pt, macd, ctd, lc2, dek, nonce)
+        var outd: ptr = net_buf_alloc(256)
+        var dlen: int = li_rt_b64_encode(pt, lc2, outd)
+        tcp_http_write_response(conn, 200, outd)
+      if is_sign(req) == 1:
+        var sig: ptr = net_buf_alloc(64)
+        li_rt_crypto_ed25519_sign(sig, raw, rl, sk)
+        var outs: ptr = net_buf_alloc(128)
+        var slen: int = li_rt_b64_encode(sig, 64, outs)
+        tcp_http_write_response(conn, 200, outs)
+      if is_verify(req) == 1:
+        var col2: int = find_colon(body)
+        var sigs: ptr = bytes_slice_i(body, 0, col2)
+        var msgs: ptr = bytes_slice_i(body, col2 + 1, blen - col2 - 1)
+        var sigd: ptr = net_buf_alloc(64)
+        var msgd: ptr = net_buf_alloc(128)
+        var lsigs: int = container_str_len_i(sigs)
+        var lmsgs: int = container_str_len_i(msgs)
+        var ls: int = li_rt_b64_decode(sigs, lsigs, sigd)
+        var lmg: int = li_rt_b64_decode(msgs, lmsgs, msgd)
+        var ok: int = li_rt_crypto_ed25519_verify(sigd, msgd, lmg, pk)
+        if ok == 0:
+          tcp_http_write_response(conn, 200, onebody)
+        if ok != 0:
+          tcp_http_write_response(conn, 200, zerobody)
+    tcp_close(conn)
+    n = n + 1
+  tcp_close(listen_fd)
+  return 0

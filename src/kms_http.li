@@ -1,0 +1,52 @@
+# Li KMS HTTP smoke server - proves the pure-Li KMS can serve over TCP/HTTP
+# using the runtime externs (tcp_listen / tcp_accept / tcp_recv_i /
+# tcp_http_write_response). Serves GET /health (200 "ok") and 404 otherwise.
+
+import std.runtime.seam
+
+def is_health(req: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  if net_byte_at_i(req, 0) != 71:
+    return 0
+  if net_byte_at_i(req, 4) != 47:
+    return 0
+  if net_byte_at_i(req, 5) != 104:
+    return 0
+  if net_byte_at_i(req, 6) != 101:
+    return 0
+  if net_byte_at_i(req, 7) != 97:
+    return 0
+  if net_byte_at_i(req, 8) != 108:
+    return 0
+  if net_byte_at_i(req, 9) != 116:
+    return 0
+  if net_byte_at_i(req, 10) != 104:
+    return 0
+  return 1
+
+def main() raises Net, Alloc, IO -> int
+  requires true
+  ensures result == 0
+  decreases 0
+=
+  var listen_fd: int = tcp_listen(54400)
+  var okbody: ptr = net_buf_alloc(8)
+  li_rt_vec_i32_set(okbody, 0, 682863)
+  var nobody: ptr = net_buf_alloc(8)
+  li_rt_vec_i32_set(nobody, 0, 683886)
+  var n: int = 0
+  while n < 3:
+    var conn: int = tcp_accept(listen_fd)
+    var req: ptr = tcp_recv_i(conn, 4096)
+    var health: int = is_health(req)
+    if health == 1:
+      tcp_http_write_response(conn, 200, okbody)
+    if health != 1:
+      tcp_http_write_response(conn, 404, nobody)
+    tcp_close(conn)
+    n = n + 1
+  tcp_close(listen_fd)
+  return 0

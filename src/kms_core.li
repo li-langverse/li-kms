@@ -1,0 +1,41 @@
+# Li KMS core selftest - Ed25519 sign/verify + XChaCha20-Poly1305 seal/open.
+# Returns 0 when every check passes, non-zero on the first failing check.
+
+import std.runtime.seam
+
+def main() raises IO, Alloc -> int
+  requires true
+  ensures result == 0 or result == 1 or result == 2 or result == 3
+  decreases 0
+=
+  var seed: ptr = net_buf_alloc(32)
+  var r0: int = li_rt_rng_fill_bytes(seed, 32)
+  var sk: ptr = net_buf_alloc(64)
+  var pk: ptr = net_buf_alloc(32)
+  li_rt_crypto_ed25519_keypair(pk, sk, seed)
+  var msg: ptr = net_buf_alloc(8)
+  li_rt_vec_i32_set(msg, 0, 12345)
+  li_rt_vec_i32_set(msg, 1, 67890)
+  var sig: ptr = net_buf_alloc(64)
+  li_rt_crypto_ed25519_sign(sig, msg, 8, sk)
+  var ok: int = li_rt_crypto_ed25519_verify(sig, msg, 8, pk)
+  if ok != 0:
+    return 1
+  var dek: ptr = net_buf_alloc(32)
+  var r1: int = li_rt_rng_fill_bytes(dek, 32)
+  var nonce: ptr = net_buf_alloc(24)
+  var r2: int = li_rt_rng_fill_bytes(nonce, 24)
+  var mac: ptr = net_buf_alloc(16)
+  var ct: ptr = net_buf_alloc(8)
+  li_rt_crypto_lock(mac, ct, msg, 8, dek, nonce)
+  var pt: ptr = net_buf_alloc(8)
+  var un: int = li_rt_crypto_unlock(pt, mac, ct, 8, dek, nonce)
+  if un != 0:
+    return 2
+  var dek2: ptr = net_buf_alloc(32)
+  var r3: int = li_rt_rng_fill_bytes(dek2, 32)
+  var pt2: ptr = net_buf_alloc(8)
+  var un2: int = li_rt_crypto_unlock(pt2, mac, ct, 8, dek2, nonce)
+  if un2 == 0:
+    return 3
+  return 0

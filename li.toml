@@ -1,0 +1,25 @@
+[package]
+name = "li-kms"
+version = "0.0.1"
+edition = "2026"
+license = "GPL-3.0-or-later"
+description = "Pure-Li KMS: Ed25519 + XChaCha20-Poly1305 envelope key management, HTTP API, base64/file persistence (Monocypher-backed runtime externs)"
+
+[dependencies]
+
+[package.metadata.lip]
+min_coverage = 0
+maintainer = "li-langverse"
+pkg_id = "PKG-li-kms"
+
+[package.metadata.li]
+github_repo = "li-kms"
+import_name = "kms"
+min_lic = "0.1.0"
+maintainer = "li-langverse"
+pkg_id = "PKG-li-kms"
+
+[package.repository]
+url = "https://github.com/li-langverse/li-kms"
+documentation = "https://github.com/li-langverse/li-kms"
+changelog = "https://github.com/li-langverse/li-kms/blob/main/CHANGELOG.md"
