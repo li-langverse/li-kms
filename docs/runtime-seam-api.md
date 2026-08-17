@@ -1,10 +1,11 @@
 # Runtime seam API required by li-kms
 
-The Li programs in `src/` `import std.runtime.seam` and use the externs below.
-They ship with the `lic` runtime once MR #1516 (`feat/li-kms-crypto`) lands; the
-C implementations live in this repo under `runtime/li_rt_crypto.c` (Monocypher-backed).
+The canonical seam fragment lives in this repo: `seam/kms-runtime-seam.li`.
+Merge it into `std.runtime.seam` of whatever lic build you compile against
+(commit `85a6463e` on `feat/li-kms-crypto` / MR #1516 removed the KMS externs
+from `lic` — they are owned here now).
 
-`std.runtime.seam` must declare (exact `extern def` from the branch)::
+The full `extern def` surface these programs rely on (from `std.runtime.seam`):
 
 ```li
 extern def net_buf_alloc(size: int) raises Alloc -> ptr
@@ -35,8 +36,9 @@ extern def li_rt_memset_zero(buf: ptr, n: int) -> int
 
 Notes:
 
-- `li_rt_rng_fill_bytes` must take `out_buf: ptr` (the branch fixes a previous
-  `int` typo that null-deref'd the seam). Keep the pointer signature.
-- `tcp_recv_i` returns a full request buffer (headers + body); see the
-  `kms_http.li` / `kms_server.li` parsing for buffer-layout assumptions.
+- `li_rt_rng_fill_bytes` must take `out_buf: ptr` (the `int`→`ptr` fix stays in
+  `lic`'s shared runtime; keep the pointer signature).
+- `tcp_recv_i` returns a full request buffer (headers + body); the full-request
+  read stays in `lic` (`runtime/li_rt_net.c` + `net_trusted` regression test).
 - `net_byte_at_i` indexes raw bytes; HTTP parsing in `kms_server.li` is offset-based.
+- The KMS-only externs above (crypto/b64/file/mem) live in `seam/kms-runtime-seam.li`

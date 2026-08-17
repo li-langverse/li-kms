@@ -21,6 +21,12 @@ export LI_NATIVE_RT
 
 all: $(RT_LIB)
 
+# C-level parity check: drives runtime/li_rt_crypto.c through the same
+# scenarios as the Li selftests — no lic toolchain needed.
+verify: $(RT_LIB)
+	$(CC) $(CFLAGS) -Iruntime tests/kms_verify.c runtime/li_rt_crypto.c runtime/vendor/monocypher/monocypher.c -o $(BUILD)/kms_verify
+	./$(BUILD)/kms_verify
+
 $(BUILD):
 	mkdir -p $(BUILD)
 
@@ -62,4 +68,4 @@ $(BUILD)/kms_server: src/kms_server.li $(RT_LIB)
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test test-http clean
+.PHONY: all test test-http verify clean

@@ -20,9 +20,13 @@ evolve and be consumed independently of the compiler tree.
   - `kms_server.li` — full HTTP KMS API (encrypt/decrypt/sign/verify over HTTP).
 - `runtime/` — C side: `li_rt_crypto.c/.h` implement the externs on Monocypher
   (`vendor/monocypher/`, BSD-2-Clause OR CC0-1.0).
-- `docs/runtime-seam-api.md` — the exact `extern def` declarations that
-  `std.runtime.seam` must provide to compile these programs.
+- `seam/kms-runtime-seam.li` — the `extern def` declarations this package needs;
+  merge into `std.runtime.seam` of your lic build (MR #1516 removed them from `lic`).
+- `docs/runtime-seam-api.md` — the seam API + what stays in lic (rng ptr fix,
+  tcp_recv full-request read, bytes ABI).
 - `tests/run_tests.sh` — build + run the selftests (`make test`).
+- `tests/kms_verify.c` — C-level parity harness that drives `runtime/li_rt_crypto.c`
+  through the same scenarios as the Li selftests (`make verify`; no lic needed).
 
 ## Build & test
 

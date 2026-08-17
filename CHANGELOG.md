@@ -9,4 +9,10 @@
   - `runtime/li_rt_crypto.c/.h` — Monocypher-backed Ed25519 + XChaCha20-Poly1305,
     base64, and binary-safe file I/O externs
   - `runtime/vendor/monocypher/` — vendored Monocypher
-  - `li.toml`, `Makefile`, `tests/run_tests.sh`, `docs/runtime-seam-api.md`
+  - `seam/kms-runtime-seam.li` — the KMS `extern def` declarations removed from
+    `lic` (commit `85a6463e` on `feat/li-kms-crypto`); merge into your lic seam
+  - `li.toml`, `Makefile`, `tests/run_tests.sh`, `tests/kms_verify.c` (C parity
+    harness, `make verify`), `docs/runtime-seam-api.md`
+- Verified on the `lic` toolchain: the 4 Li selftests exit 0, `kms_http`
+  serves health + 404, `kms_server` round-trips encrypt/decrypt and
+  sign/verify.

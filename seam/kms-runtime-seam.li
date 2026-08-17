@@ -1,0 +1,68 @@
+# KMS runtime seam — `extern def` declarations for the Monocypher-backed KMS
+# runtime externs (runtime/li_rt_crypto.c) and the persistence helpers.
+#
+# How to use: merge this file into your lic `std/runtime/seam.li` (after the
+# `li_rt_rng_fill_bytes` block) — or keep it as the KMS ABI reference if your
+# lic build already carries the seam. `lic` (MR #1516) no longer ships these;
+# this repo is their canonical home.
+#
+# Required from lic's runtime (kept there as shared ABI):
+#   - li_rt_rng_fill_bytes(out_buf: ptr, n: int) -> int   (ptr, not int)
+#   - tcp_recv_i full-request read (headers + Content-Length body)
+#   - net_buf_alloc / net_buf_free / net_byte_at_i / bytes_* / container_str_len_i
+
+extern def li_rt_crypto_ed25519_keypair(pk: ptr, sk: ptr, seed: ptr) -> int
+  requires true
+  ensures result == 0
+  decreases 0
+
+extern def li_rt_crypto_ed25519_sign(sig: ptr, msg: ptr, msg_len: int, sk: ptr) -> int
+  requires 0 <= msg_len
+  ensures result == 0
+  decreases 0
+
+extern def li_rt_crypto_ed25519_verify(sig: ptr, msg: ptr, msg_len: int, pk: ptr) -> int
+  requires 0 <= msg_len
+  ensures result == 0 or result == -1
+  decreases 0
+
+extern def li_rt_crypto_lock(mac: ptr, ct: ptr, pt: ptr, pt_len: int, key: ptr, nonce: ptr) -> int
+  requires 0 <= pt_len
+  ensures result == 0
+  decreases 0
+
+extern def li_rt_crypto_unlock(pt: ptr, mac: ptr, ct: ptr, ct_len: int, key: ptr, nonce: ptr) -> int
+  requires 0 <= ct_len
+  ensures result == 0 or result == -1
+  decreases 0
+
+extern def li_rt_b64_encode(in_buf: ptr, in_len: int, out: ptr) -> int
+  requires 0 <= in_len
+  ensures result >= 0
+  decreases 0
+
+extern def li_rt_b64_decode(in_buf: ptr, in_len: int, out: ptr) -> int
+  requires 0 <= in_len
+  ensures result >= 0
+  decreases 0
+
+extern def li_rt_file_write_bytes(path: str, data: ptr, n: int) -> int
+  requires 0 <= n
+  ensures result >= -1
+  decreases 0
+
+extern def li_rt_file_read_bytes(path: str, buf: ptr, cap: int) -> int
+  requires 0 <= cap
+  ensures result >= -1
+  decreases 0
+
+extern def li_rt_memcpy_off(dst: ptr, dst_off: int, src: ptr, n: int) -> int
+  requires 0 <= dst_off
+  requires 0 <= n
+  ensures result >= -1
+  decreases 0
+
+extern def li_rt_memset_zero(buf: ptr, n: int) -> int
+  requires 0 <= n
+  ensures result >= -1
+  decreases 0
