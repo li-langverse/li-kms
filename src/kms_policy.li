@@ -1,0 +1,114 @@
+# Li KMS authorization policy - the scope matrix (pure logic, no I/O).
+#
+# Ports kms/policy.py::authorize from the interim Python KMS. The admin-api
+# verifies the real credential (console JWT / lb_agt_ agent / lb_app_ app) and
+# resolves it into an actor claim set; the KMS enforces the scope matrix against
+# the key row (defense in depth: even a buggy admin-api cannot unseal a key for
+# an actor whose org/owner does not match the key).
+#
+# IDs (org_id, owner_user) are 32-byte null-padded buffers. Enums are small ints:
+#   scope:   0=project  1=org  2=cross_org
+#   managed: 0=user     1=platform
+#   kind:    0=user     1=agent  2=app  3=platform
+#   role:    0=viewer/member/developer  1=admin  2=owner
+#   action:  0=read  1=sign  2=write  3=list
+#
+# Selftest returns 0 on success, or a distinct non-zero code per failed case.
+
+import std.runtime.seam
+
+# 1 if the 32-byte id buffer is all zero (None), else 0.
+def id_empty(a: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  var i: int = 0
+  while i < 32:
+    if net_byte_at_i(a, i) != 0:
+      return 0
+    i = i + 1
+  return 1
+
+# 1 if two 32-byte id buffers are byte-equal, else 0.
+def id_eq(a: ptr, b: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  var i: int = 0
+  while i < 32:
+    if net_byte_at_i(a, i) != net_byte_at_i(b, i):
+      return 0
+    i = i + 1
+  return 1
+
+# Scope matrix: may `actor` perform `action` on `key`? Returns 1 if allowed.
+def authorize(key_scope: int, key_org: ptr, key_owner: ptr, key_managed: int,
+              actor_kind: int, actor_org: ptr, actor_role: int, actor_owner: ptr,
+              action: int) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  if key_managed == 1:
+    if actor_kind == 3:
+      return 1
+    return 0
+  if key_scope == 2:
+    if id_empty(key_owner) == 1:
+      return 0
+    if id_eq(actor_owner, key_owner) == 1:
+      return 1
+    return 0
+  if id_empty(key_org) == 1:
+    return 0
+  if id_eq(actor_org, key_org) != 1:
+    return 0
+  if action == 2:
+    if actor_role >= 1:
+      return 1
+    return 0
+  return 1
+
+# Build a 32-byte id buffer with byte 0 = c, rest zero (c in 0..255).
+def mkid(c: int) raises IO, Alloc -> ptr
+  requires 0 <= c <= 255
+  ensures true
+  decreases 0
+=
+  var b: ptr = net_buf_alloc(32)
+  li_rt_memset_zero(b, 32)
+  li_rt_vec_i32_set(b, 0, c)
+  return b
+
+def main() raises IO, Alloc -> int
+  requires true
+  ensures result == 0 or result == 1 or result == 2 or result == 3 or result == 4 or result == 5 or result == 6 or result == 7 or result == 8 or result == 9 or result == 10 or result == 11 or result == 12 or result == 13 or result == 14 or result == 15 or result == 16
+  decreases 0
+=
+  var orgX: ptr = mkid(88)
+  var orgY: ptr = mkid(89)
+  var userA: ptr = mkid(65)
+  var userB: ptr = mkid(66)
+  var none: ptr = mkid(0)
+  # 1. platform-managed key: only the platform may touch it
+  if authorize(0, orgX, none, 1, 3, orgX, 2, none, 0) != 1: return 1
+  if authorize(0, orgX, none, 1, 0, orgX, 2, userA, 0) != 0: return 2
+  if authorize(0, orgX, none, 1, 1, orgX, 2, userA, 0) != 0: return 3
+  if authorize(0, orgX, none, 1, 2, orgX, 2, none, 0) != 0: return 4
+  if authorize(0, orgX, none, 1, 3, orgX, 2, none, 2) != 1: return 5
+  # 2. cross_org key (owner = userA): only that user or their bound agent
+  if authorize(2, orgX, userA, 0, 0, orgX, 0, userA, 0) != 1: return 6
+  if authorize(2, orgX, userA, 0, 1, orgX, 0, userA, 0) != 1: return 7
+  if authorize(2, orgX, userA, 0, 0, orgX, 0, userB, 0) != 0: return 8
+  if authorize(2, orgX, userA, 0, 2, orgX, 0, none, 0) != 0: return 9
+  if authorize(2, orgX, none, 0, 0, orgX, 0, userA, 0) != 0: return 10
+  # 3. project/org key (org = orgX): org membership + role for write
+  if authorize(0, orgX, none, 0, 0, orgX, 0, userA, 0) != 1: return 11
+  if authorize(1, orgX, none, 0, 1, orgX, 0, userA, 1) != 1: return 12
+  if authorize(0, orgX, none, 0, 0, orgX, 1, userA, 2) != 1: return 13
+  if authorize(0, orgX, none, 0, 0, orgX, 0, userA, 2) != 0: return 14
+  if authorize(0, orgX, none, 0, 0, orgY, 0, userA, 0) != 0: return 15
+  if authorize(0, none, none, 0, 0, orgX, 0, userA, 0) != 0: return 16
+  return 0
