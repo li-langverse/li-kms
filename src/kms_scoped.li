@@ -1,0 +1,162 @@
+# Li KMS scoped store - key lifecycle (seal under KEK -> persist -> reload ->
+# unseal) + a scope-matrix check against the key record. Pure Li on the
+# Monocypher-backed runtime externs + file I/O. Selftest returns 0 on success.
+#
+# This is the persistence half of the scoped-key model: the secret value is
+# sealed directly under the KEK (nonce/mac/ct persisted base64, as in
+# kms_persist.li), and the policy (kms_policy.li) is applied to the key row
+# (scope/org/owner/managed) to gate the unseal.
+
+import std.runtime.seam
+
+def buf_eq(a: ptr, b: ptr, n: int) raises IO -> int
+  requires 0 <= n
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  var i: int = 0
+  while i < n:
+    if net_byte_at_i(a, i) != net_byte_at_i(b, i):
+      return 0
+    i = i + 1
+  return 1
+
+# Seal n bytes at pt under 32-byte key: fills nonce (24B), mac (16B), ct (nB).
+def seal(key: ptr, pt: ptr, n: int, nonce: ptr, mac: ptr, ct: ptr) raises IO -> int
+  requires 0 <= n
+  ensures result == 0
+  decreases 0
+=
+  var r: int = li_rt_rng_fill_bytes(nonce, 24)
+  li_rt_crypto_lock(mac, ct, pt, n, key, nonce)
+  return 0
+
+# Unseal ct into out under key; 0 on success, -1 on auth failure.
+def open_ct(key: ptr, mac: ptr, nonce: ptr, ct: ptr, n: int, out: ptr) raises IO -> int
+  requires 0 <= n
+  ensures result == 0 or result == -1
+  decreases 0
+=
+  return li_rt_crypto_unlock(out, mac, ct, n, key, nonce)
+
+# --- scope-matrix policy (same as kms_policy.li) ---
+def id_empty(a: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  var i: int = 0
+  while i < 32:
+    if net_byte_at_i(a, i) != 0:
+      return 0
+    i = i + 1
+  return 1
+
+def id_eq(a: ptr, b: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  var i: int = 0
+  while i < 32:
+    if net_byte_at_i(a, i) != net_byte_at_i(b, i):
+      return 0
+    i = i + 1
+  return 1
+
+def authorize(key_scope: int, key_org: ptr, key_owner: ptr, key_managed: int,
+              actor_kind: int, actor_org: ptr, actor_role: int, actor_owner: ptr,
+              action: int) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  if key_managed == 1:
+    if actor_kind == 3:
+      return 1
+    return 0
+  if key_scope == 2:
+    if id_empty(key_owner) == 1:
+      return 0
+    if id_eq(actor_owner, key_owner) == 1:
+      return 1
+    return 0
+  if id_empty(key_org) == 1:
+    return 0
+  if id_eq(actor_org, key_org) != 1:
+    return 0
+  if action == 2:
+    if actor_role >= 1:
+      return 1
+    return 0
+  return 1
+
+def mkid(c: int) raises IO, Alloc -> ptr
+  requires 0 <= c <= 255
+  ensures true
+  decreases 0
+=
+  var b: ptr = net_buf_alloc(32)
+  li_rt_memset_zero(b, 32)
+  li_rt_vec_i32_set(b, 0, c)
+  return b
+
+def main() raises IO, Alloc -> int
+  requires true
+  ensures result == 0 or result == 1 or result == 2 or result == 3 or result == 4 or result == 5 or result == 6
+  decreases 0
+=
+  var kek: ptr = net_buf_alloc(32)
+  li_rt_rng_fill_bytes(kek, 32)
+  var value: ptr = net_buf_alloc(16)
+  li_rt_rng_fill_bytes(value, 16)
+  var nonce: ptr = net_buf_alloc(24)
+  var mac: ptr = net_buf_alloc(16)
+  var ct: ptr = net_buf_alloc(16)
+  seal(kek, value, 16, nonce, mac, ct)
+  var nb: ptr = net_buf_alloc(40)
+  var ne: int = li_rt_b64_encode(nonce, 24, nb)
+  li_rt_file_write_bytes("/tmp/kms_scoped_nonce.b64", nb, ne)
+  var mb: ptr = net_buf_alloc(32)
+  var me: int = li_rt_b64_encode(mac, 16, mb)
+  li_rt_file_write_bytes("/tmp/kms_scoped_mac.b64", mb, me)
+  var cb: ptr = net_buf_alloc(32)
+  var ce: int = li_rt_b64_encode(ct, 16, cb)
+  li_rt_file_write_bytes("/tmp/kms_scoped_ct.b64", cb, ce)
+  var nr: ptr = net_buf_alloc(40)
+  var nrn: int = li_rt_file_read_bytes("/tmp/kms_scoped_nonce.b64", nr, 40)
+  var nonce2: ptr = net_buf_alloc(24)
+  li_rt_b64_decode(nr, nrn, nonce2)
+  var mr: ptr = net_buf_alloc(32)
+  var mrn: int = li_rt_file_read_bytes("/tmp/kms_scoped_mac.b64", mr, 32)
+  var mac2: ptr = net_buf_alloc(16)
+  li_rt_b64_decode(mr, mrn, mac2)
+  var cr: ptr = net_buf_alloc(32)
+  var crn: int = li_rt_file_read_bytes("/tmp/kms_scoped_ct.b64", cr, 32)
+  var ct2: ptr = net_buf_alloc(16)
+  li_rt_b64_decode(cr, crn, ct2)
+  var value2: ptr = net_buf_alloc(16)
+  var u: int = open_ct(kek, mac2, nonce2, ct2, 16, value2)
+  if u != 0:
+    return 1
+  if buf_eq(value, value2, 16) != 1:
+    return 2
+  # wrong KEK must fail to unseal
+  var kek3: ptr = net_buf_alloc(32)
+  li_rt_rng_fill_bytes(kek3, 32)
+  var value3: ptr = net_buf_alloc(16)
+  if open_ct(kek3, mac2, nonce2, ct2, 16, value3) == 0:
+    return 3
+  # scope matrix on the key row (org-scoped key in orgX): member read allowed,
+  # other org denied
+  var orgX: ptr = mkid(88)
+  var orgY: ptr = mkid(89)
+  var none: ptr = mkid(0)
+  if authorize(1, orgX, none, 0, 0, orgX, 0, none, 0) != 1:
+    return 4
+  if authorize(1, orgX, none, 0, 0, orgY, 0, none, 0) != 0:
+    return 5
+  # platform-managed key: only the platform
+  if authorize(1, orgX, none, 1, 0, orgX, 2, none, 0) != 0:
+    return 6
+  return 0
