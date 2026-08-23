@@ -14,7 +14,7 @@ LI_RT_LIB ?=
 LI_NATIVE_RT ?= 0
 BUILD := build
 RT_LIB := $(BUILD)/librt_crypto.a
-SELFTESTS := kms_core kms_envelope kms_exploits kms_persist kms_policy kms_ratelimit kms_scoped
+SELFTESTS := kms_core kms_envelope kms_exploits kms_persist kms_policy kms_ratelimit kms_scoped kms_api
 
 export LI_RT_LIB
 export LI_NATIVE_RT

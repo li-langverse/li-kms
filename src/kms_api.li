@@ -1,0 +1,177 @@
+# Li KMS scoped API core - the decision logic behind POST /v1/keys/{id}/decrypt.
+#
+# Wires the three ported pieces together (kms_policy + kms_ratelimit +
+# kms_scoped): given the resolved actor claims (from the admin-api, never a raw
+# JWT), the key row, and the KEK-sealed value, `handle_decrypt` enforces the
+# scope matrix, then the per-key rate cap, then unseals the value into
+# `value_out`. Returns 1 (unsealed) or 0 (denied - policy, rate limit, or
+# auth failure). The HTTP/JSON layer (kms_server.li) calls this and writes the
+# audit row + redacted response. Selftest returns 0 on success.
+
+import std.runtime.seam
+
+def buf_eq(a: ptr, b: ptr, n: int) raises IO -> int
+  requires 0 <= n
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  var i: int = 0
+  while i < n:
+    if net_byte_at_i(a, i) != net_byte_at_i(b, i):
+      return 0
+    i = i + 1
+  return 1
+
+def seal(key: ptr, pt: ptr, n: int, nonce: ptr, mac: ptr, ct: ptr) raises IO -> int
+  requires 0 <= n
+  ensures result == 0
+  decreases 0
+=
+  var r: int = li_rt_rng_fill_bytes(nonce, 24)
+  li_rt_crypto_lock(mac, ct, pt, n, key, nonce)
+  return 0
+
+def open_ct(key: ptr, mac: ptr, nonce: ptr, ct: ptr, n: int, out: ptr) raises IO -> int
+  requires 0 <= n
+  ensures result == 0 or result == -1
+  decreases 0
+=
+  return li_rt_crypto_unlock(out, mac, ct, n, key, nonce)
+
+# --- scope-matrix policy (kms_policy.li) ---
+def id_empty(a: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  var i: int = 0
+  while i < 32:
+    if net_byte_at_i(a, i) != 0:
+      return 0
+    i = i + 1
+  return 1
+
+def id_eq(a: ptr, b: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  var i: int = 0
+  while i < 32:
+    if net_byte_at_i(a, i) != net_byte_at_i(b, i):
+      return 0
+    i = i + 1
+  return 1
+
+def authorize(key_scope: int, key_org: ptr, key_owner: ptr, key_managed: int,
+              actor_kind: int, actor_org: ptr, actor_role: int, actor_owner: ptr,
+              action: int) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  if key_managed == 1:
+    if actor_kind == 3:
+      return 1
+    return 0
+  if key_scope == 2:
+    if id_empty(key_owner) == 1:
+      return 0
+    if id_eq(actor_owner, key_owner) == 1:
+      return 1
+    return 0
+  if id_empty(key_org) == 1:
+    return 0
+  if id_eq(actor_org, key_org) != 1:
+    return 0
+  if action == 2:
+    if actor_role >= 1:
+      return 1
+    return 0
+  return 1
+
+# --- fixed-window rate limiter (kms_ratelimit.li) ---
+def rl_check(window_start: int, count: int, now: int, limit: int, out: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  if now - window_start >= 60:
+    li_rt_vec_i32_set(out, 0, now)
+    li_rt_vec_i32_set(out, 1, 1)
+    return 1
+  if count >= limit:
+    li_rt_vec_i32_set(out, 0, window_start)
+    li_rt_vec_i32_set(out, 1, count)
+    return 0
+  li_rt_vec_i32_set(out, 0, window_start)
+  li_rt_vec_i32_set(out, 1, count + 1)
+  return 1
+
+def mkid(c: int) raises IO, Alloc -> ptr
+  requires 0 <= c <= 255
+  ensures true
+  decreases 0
+=
+  var b: ptr = net_buf_alloc(32)
+  li_rt_memset_zero(b, 32)
+  li_rt_vec_i32_set(b, 0, c)
+  return b
+
+# Core of POST /v1/keys/{id}/decrypt: policy -> rate limit -> unseal.
+# Returns 1 (unsealed into value_out) or 0 (denied). Writes the new
+# rate-limit state (window_start, count) to out (8 bytes, two LE i32s).
+def handle_decrypt(actor_kind: int, actor_org: ptr, actor_role: int, actor_owner: ptr,
+                   key_scope: int, key_org: ptr, key_owner: ptr, key_managed: int,
+                   kek: ptr, nonce: ptr, mac: ptr, ct: ptr, ct_len: int,
+                   rl_window_start: int, rl_count: int, now: int, rl_limit: int,
+                   out: ptr, value_out: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  var allowed: int = authorize(key_scope, key_org, key_owner, key_managed,
+                               actor_kind, actor_org, actor_role, actor_owner, 0)
+  if allowed != 1:
+    return 0
+  var rl: int = rl_check(rl_window_start, rl_count, now, rl_limit, out)
+  if rl != 1:
+    return 0
+  var u: int = open_ct(kek, mac, nonce, ct, ct_len, value_out)
+  if u != 0:
+    return 0
+  return 1
+
+def main() raises IO, Alloc -> int
+  requires true
+  ensures result == 0 or result == 1 or result == 2 or result == 3 or result == 4
+  decreases 0
+=
+  var kek: ptr = net_buf_alloc(32)
+  li_rt_rng_fill_bytes(kek, 32)
+  var value: ptr = net_buf_alloc(16)
+  li_rt_rng_fill_bytes(value, 16)
+  var nonce: ptr = net_buf_alloc(24)
+  var mac: ptr = net_buf_alloc(16)
+  var ct: ptr = net_buf_alloc(16)
+  seal(kek, value, 16, nonce, mac, ct)
+  var orgX: ptr = mkid(88)
+  var orgY: ptr = mkid(89)
+  var none: ptr = mkid(0)
+  var out: ptr = net_buf_alloc(8)
+  var got: ptr = net_buf_alloc(16)
+  # 1. allowed org member, fresh window -> unsealed
+  if handle_decrypt(0, orgX, 0, none, 1, orgX, none, 0,
+                    kek, nonce, mac, ct, 16, 0, 0, 10, 60, out, got) != 1:
+    return 1
+  if buf_eq(value, got, 16) != 1:
+    return 2
+  # 2. different org -> denied by policy
+  if handle_decrypt(0, orgY, 0, none, 1, orgX, none, 0,
+                    kek, nonce, mac, ct, 16, 0, 0, 10, 60, out, got) != 0:
+    return 3
+  # 3. over the per-key cap (same window) -> denied by rate limit
+  if handle_decrypt(0, orgX, 0, none, 1, orgX, none, 0,
+                    kek, nonce, mac, ct, 16, 10, 60, 20, 60, out, got) != 0:
+    return 4
+  return 0
