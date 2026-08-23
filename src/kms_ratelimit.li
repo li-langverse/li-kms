@@ -1,0 +1,51 @@
+# Li KMS rate limiter - fixed-window per-key / per-org cap (pure logic).
+#
+# Ports the rate-limiting intent of kms/policy.py::RateLimiter. The Python uses
+# a sliding 60s window (per key + per org); this Li version uses a fixed 60s
+# window (simpler, no per-request timestamp buffer) - same protection, with the
+# usual fixed-window boundary burst (up to 2x the cap across a window edge).
+#
+# State is (window_start, count) as integer seconds / int. `rl_check` returns 1
+# if the request is allowed, 0 if rate-limited, and writes the new
+# (window_start, count) to `out` (8 bytes: two little-endian i32s).
+#
+# Selftest returns 0 on success, or a distinct non-zero code per failed case.
+
+import std.runtime.seam
+
+# Fixed-window check. now/window_start are integer seconds; limit is the cap.
+# Returns 1 (allowed) or 0 (limited); writes new window_start + count to out.
+def rl_check(window_start: int, count: int, now: int, limit: int, out: ptr) raises IO -> int
+  requires true
+  ensures result == 0 or result == 1
+  decreases 0
+=
+  if now - window_start >= 60:
+    li_rt_vec_i32_set(out, 0, now)
+    li_rt_vec_i32_set(out, 1, 1)
+    return 1
+  if count >= limit:
+    li_rt_vec_i32_set(out, 0, window_start)
+    li_rt_vec_i32_set(out, 1, count)
+    return 0
+  li_rt_vec_i32_set(out, 0, window_start)
+  li_rt_vec_i32_set(out, 1, count + 1)
+  return 1
+
+def main() raises IO, Alloc -> int
+  requires true
+  ensures result == 0 or result == 1 or result == 2 or result == 3 or result == 4 or result == 5
+  decreases 0
+=
+  var out: ptr = net_buf_alloc(8)
+  # fresh window, first request -> allowed
+  if rl_check(0, 0, 10, 3, out) != 1: return 1
+  # second request in the same window -> allowed
+  if rl_check(10, 1, 20, 3, out) != 1: return 2
+  # third request (reaches the cap) -> allowed
+  if rl_check(10, 2, 30, 3, out) != 1: return 3
+  # fourth request (over the cap, same window) -> limited
+  if rl_check(10, 3, 40, 3, out) != 0: return 4
+  # after the 60s window expires -> allowed (new window)
+  if rl_check(10, 3, 71, 3, out) != 1: return 5
+  return 0
